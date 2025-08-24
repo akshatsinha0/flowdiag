@@ -171,20 +171,13 @@ function getMermaidWebViewContent(diagramText: string) {
   <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src https:
-    <script src="https:
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; script-src https: 'unsafe-inline'; style-src 'unsafe-inline'">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FlowDiag</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
     <style>
-      body { 
-        font-family: Arial, sans-serif; 
-        margin: 20px; 
-        background: #f5f5f5;
-      }
-      .mermaid { 
-        background: white; 
-        padding: 20px; 
-        border-radius: 8px; 
-        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-      }
+      body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+      .mermaid { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
     </style>
   </head>
   <body>
@@ -193,13 +186,10 @@ function getMermaidWebViewContent(diagramText: string) {
       ${diagramText}
     </div>
     <script>
-      mermaid.initialize({ 
+      mermaid.initialize({
         startOnLoad: true,
         theme: 'default',
-        flowchart: {
-          useMaxWidth: true,
-          htmlLabels: true
-        }
+        flowchart: { useMaxWidth: true, htmlLabels: true }
       });
     </script>
   </body>
@@ -218,17 +208,44 @@ export async function activate(context: vscode.ExtensionContext) {
   const initializeParser = async () => {
     try {
       console.log('=== Starting Tree-sitter initialization ===');
-      
+
+      // Resolve extension root path early
+      let extensionRoot = context.extensionPath || context.extensionUri?.fsPath || __dirname;
+      if (!extensionRoot) extensionRoot = path.dirname(__dirname);
+      console.log('Resolved extension root:', extensionRoot);
+
+      // Compute a robust runtime wasm path: prefer dist/media in packaged builds, fallback to media
+      const runtimeCandidates = [
+        path.join(extensionRoot, 'dist', 'media', 'tree-sitter.wasm'),
+        path.join(extensionRoot, 'media', 'tree-sitter.wasm')
+      ];
+      const runtimeWasmPath = runtimeCandidates.find(p => {
+        try { return fs.existsSync(p); } catch { return false; }
+      }) || runtimeCandidates[0];
+      console.log('Runtime wasm candidate chosen:', runtimeWasmPath);
+
       console.log('Step 1: Calling Parser.init()...');
-      await Parser.init();
+      await Parser.init({ locateFile: () => runtimeWasmPath } as any);
       console.log('✓ Parser.init() completed successfully');
       
-      console.log('Step 2: Creating WASM URIs...');
+      console.log('Step 2: Debugging extension context...');
+      console.log('Full context object keys:', Object.keys(context));
       console.log('Extension context info:', {
         extensionPath: context.extensionPath,
         extensionUri: context.extensionUri?.toString(),
-        globalStorageUri: context.globalStorageUri?.toString()
+        globalStorageUri: context.globalStorageUri?.toString(),
+        extensionMode: context.extensionMode,
+        environmentVariableCollection: !!context.environmentVariableCollection
       });
+      
+      // Try to find the extension path in different ways
+      const possiblePaths = [
+        context.extensionPath,
+        context.extensionUri?.fsPath,
+        __dirname,
+        process.cwd()
+      ];
+      console.log('Possible extension paths:', possiblePaths);
       
       // Use extensionPath as fallback if extensionUri is undefined
       let jsWasmUri: vscode.Uri;
@@ -239,8 +256,8 @@ export async function activate(context: vscode.ExtensionContext) {
         tsWasmUri = vscode.Uri.joinPath(context.extensionUri, 'media', 'tree-sitter-typescript.wasm');
       } else {
         // Fallback to using extensionPath
-        const jsPath = context.asAbsolutePath('media/tree-sitter-javascript.wasm');
-        const tsPath = context.asAbsolutePath('media/tree-sitter-typescript.wasm');
+        const jsPath = path.join(extensionRoot, 'media', 'tree-sitter-javascript.wasm');
+        const tsPath = path.join(extensionRoot, 'media', 'tree-sitter-typescript.wasm');
         jsWasmUri = vscode.Uri.file(jsPath);
         tsWasmUri = vscode.Uri.file(tsPath);
       }
@@ -250,27 +267,36 @@ export async function activate(context: vscode.ExtensionContext) {
         ts: tsWasmUri.toString() 
       });
       
-      console.log('Step 3: Reading JavaScript WASM file with Node.js fs...');
-      const jsWasmPath = path.join(context.extensionPath, 'media', 'tree-sitter-javascript.wasm');
+      console.log('Step 3: Determining extension path...');
+      let extensionPath = extensionRoot;
+      
+      console.log('Using extension path:', extensionPath);
+      
+      console.log('Step 4: Reading JavaScript WASM file with Node.js fs...');
+      const jsWasmPath = path.join(extensionPath, 'media', 'tree-sitter-javascript.wasm');
       console.log('JavaScript WASM path:', jsWasmPath);
+      console.log('File exists?', fs.existsSync(jsWasmPath));
+      
       const jsWasmBuffer = fs.readFileSync(jsWasmPath);
       console.log('✓ JavaScript WASM file read, size:', jsWasmBuffer.length, 'bytes');
       
-      console.log('Step 4: Loading JavaScript Language...');
+      console.log('Step 5: Loading JavaScript Language...');
       jsLang = await Language.load(jsWasmBuffer);
       console.log('✓ JavaScript Language loaded successfully');
       
-      console.log('Step 5: Reading TypeScript WASM file with Node.js fs...');
-      const tsWasmPath = path.join(context.extensionPath, 'media', 'tree-sitter-typescript.wasm');
+      console.log('Step 6: Reading TypeScript WASM file with Node.js fs...');
+      const tsWasmPath = path.join(extensionPath, 'media', 'tree-sitter-typescript.wasm');
       console.log('TypeScript WASM path:', tsWasmPath);
+      console.log('File exists?', fs.existsSync(tsWasmPath));
+      
       const tsWasmBuffer = fs.readFileSync(tsWasmPath);
       console.log('✓ TypeScript WASM file read, size:', tsWasmBuffer.length, 'bytes');
       
-      console.log('Step 6: Loading TypeScript Language...');
+      console.log('Step 7: Loading TypeScript Language...');
       tsLang = await Language.load(tsWasmBuffer);
       console.log('✓ TypeScript Language loaded successfully');
       
-      console.log('Step 7: Creating Parser instance...');
+      console.log('Step 8: Creating Parser instance...');
       parser = new Parser();
       console.log('✓ Parser instance created');
       

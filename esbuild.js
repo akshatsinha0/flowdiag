@@ -52,6 +52,16 @@ const copyWasmPlugin = {
 					console.log(`Copied ${file} to dist/media/`);
 				}
 			});
+
+			// Copy the Tree-sitter runtime wasm used by web-tree-sitter
+			const runtimeSrc = path.join(__dirname, 'node_modules', 'web-tree-sitter', 'tree-sitter.wasm');
+			const runtimeDest = path.join(distMediaDir, 'tree-sitter.wasm');
+			if (fs.existsSync(runtimeSrc)) {
+				fs.copyFileSync(runtimeSrc, runtimeDest);
+				console.log('Copied tree-sitter.wasm to dist/media/');
+			} else {
+				console.warn('tree-sitter.wasm not found in node_modules/web-tree-sitter; ensure dependencies are installed before building.');
+			}
 		});
 	},
 };
