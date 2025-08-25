@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { Parser, Language } from 'web-tree-sitter';
+// runtime import for web-tree-sitter to avoid bundling issues
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -199,19 +199,20 @@ function getMermaidWebViewContent(diagramText: string) {
 export async function activate(context: vscode.ExtensionContext) {
   console.log('FlowDiag extension is activating...');
   
-  let parser: Parser | null = null;
-  let jsLang: Language | null = null;
-  let tsLang: Language | null = null;
+  let parser: any | null = null;
+  let jsLang: any | null = null;
+  let tsLang: any | null = null;
   let isInitialized = false;
+  let parserReady:Promise<void>|null=null;
 
-  // Initialize Tree-sitter asynchronously
+  // Initialize Tree-sitter asynchronously with runtime ESM import
   const initializeParser = async () => {
     try {
       console.log('=== Starting Tree-sitter initialization ===');
 
       // Resolve extension root path early
       let extensionRoot = context.extensionPath || context.extensionUri?.fsPath || __dirname;
-      if (!extensionRoot) extensionRoot = path.dirname(__dirname);
+      if (!extensionRoot) { extensionRoot = path.dirname(__dirname); }
       console.log('Resolved extension root:', extensionRoot);
 
       // Compute a robust runtime wasm path: prefer dist/media in packaged builds, fallback to media
@@ -224,102 +225,53 @@ export async function activate(context: vscode.ExtensionContext) {
       }) || runtimeCandidates[0];
       console.log('Runtime wasm candidate chosen:', runtimeWasmPath);
 
-      console.log('Step 1: Calling Parser.init()...');
-      await Parser.init({ locateFile: () => runtimeWasmPath } as any);
+      console.log('Step 1: Dynamically importing web-tree-sitter...');
+      const {Parser,Language} = await import('web-tree-sitter') as any;
+
+      console.log('Step 2: Calling Parser.init() with locateFile...');
+      await Parser.init({ locateFile: () => runtimeWasmPath });
       console.log('✓ Parser.init() completed successfully');
       
-      console.log('Step 2: Debugging extension context...');
-      console.log('Full context object keys:', Object.keys(context));
-      console.log('Extension context info:', {
-        extensionPath: context.extensionPath,
-        extensionUri: context.extensionUri?.toString(),
-        globalStorageUri: context.globalStorageUri?.toString(),
-        extensionMode: context.extensionMode,
-        environmentVariableCollection: !!context.environmentVariableCollection
-      });
-      
-      // Try to find the extension path in different ways
-      const possiblePaths = [
-        context.extensionPath,
-        context.extensionUri?.fsPath,
-        __dirname,
-        process.cwd()
-      ];
-      console.log('Possible extension paths:', possiblePaths);
-      
-      // Use extensionPath as fallback if extensionUri is undefined
-      let jsWasmUri: vscode.Uri;
-      let tsWasmUri: vscode.Uri;
-      
-      if (context.extensionUri) {
-        jsWasmUri = vscode.Uri.joinPath(context.extensionUri, 'media', 'tree-sitter-javascript.wasm');
-        tsWasmUri = vscode.Uri.joinPath(context.extensionUri, 'media', 'tree-sitter-typescript.wasm');
-      } else {
-        // Fallback to using extensionPath
-        const jsPath = path.join(extensionRoot, 'media', 'tree-sitter-javascript.wasm');
-        const tsPath = path.join(extensionRoot, 'media', 'tree-sitter-typescript.wasm');
-        jsWasmUri = vscode.Uri.file(jsPath);
-        tsWasmUri = vscode.Uri.file(tsPath);
-      }
-      
-      console.log('✓ WASM URIs created:', { 
-        js: jsWasmUri.toString(), 
-        ts: tsWasmUri.toString() 
-      });
-      
-      console.log('Step 3: Determining extension path...');
+      console.log('Step 3: Locating language WASM files...');
       let extensionPath = extensionRoot;
-      
-      console.log('Using extension path:', extensionPath);
-      
-      console.log('Step 4: Reading JavaScript WASM file with Node.js fs...');
       const jsWasmPath = path.join(extensionPath, 'media', 'tree-sitter-javascript.wasm');
-      console.log('JavaScript WASM path:', jsWasmPath);
-      console.log('File exists?', fs.existsSync(jsWasmPath));
-      
-      const jsWasmBuffer = fs.readFileSync(jsWasmPath);
-      console.log('✓ JavaScript WASM file read, size:', jsWasmBuffer.length, 'bytes');
-      
-      console.log('Step 5: Loading JavaScript Language...');
-      jsLang = await Language.load(jsWasmBuffer);
-      console.log('✓ JavaScript Language loaded successfully');
-      
-      console.log('Step 6: Reading TypeScript WASM file with Node.js fs...');
       const tsWasmPath = path.join(extensionPath, 'media', 'tree-sitter-typescript.wasm');
-      console.log('TypeScript WASM path:', tsWasmPath);
-      console.log('File exists?', fs.existsSync(tsWasmPath));
-      
+      console.log('JavaScript WASM path:', jsWasmPath, 'exists?', fs.existsSync(jsWasmPath));
+      console.log('TypeScript WASM path:', tsWasmPath, 'exists?', fs.existsSync(tsWasmPath));
+
+      console.log('Step 4: Reading language WASM buffers...');
+      const jsWasmBuffer = fs.readFileSync(jsWasmPath);
       const tsWasmBuffer = fs.readFileSync(tsWasmPath);
-      console.log('✓ TypeScript WASM file read, size:', tsWasmBuffer.length, 'bytes');
-      
-      console.log('Step 7: Loading TypeScript Language...');
+
+      console.log('Step 5: Loading languages...');
+      jsLang = await Language.load(jsWasmBuffer);
       tsLang = await Language.load(tsWasmBuffer);
-      console.log('✓ TypeScript Language loaded successfully');
-      
-      console.log('Step 8: Creating Parser instance...');
+
+      console.log('Step 6: Creating Parser instance...');
       parser = new Parser();
-      console.log('✓ Parser instance created');
-      
+
       isInitialized = true;
       console.log('=== Tree-sitter initialization completed successfully ===');
       vscode.window.showInformationMessage('FlowDiag: Parser initialized successfully!');
     } catch (error) {
       console.error('=== Tree-sitter initialization FAILED ===');
       console.error('Error:', error);
-      console.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace');
+      console.error('Error stack:', error instanceof Error ? (error as Error).stack : 'No stack trace');
       vscode.window.showErrorMessage(`FlowDiag: Failed to initialize parser - ${error}`);
       isInitialized = false;
+      throw error;
     }
   };
 
-  // Start initialization but don't wait for it
-  initializeParser();
+  // Start initialization but don't wait for it; also keep a readiness promise
+  parserReady=initializeParser();
 
   
   context.subscriptions.push(
     vscode.commands.registerCommand('flowdiag.debugParse', async () => {
       console.log('Debug Parse command executed');
       
+      try{await parserReady;}catch{ /* already surfaced */ }
       if (!isInitialized || !parser || !jsLang || !tsLang) {
         vscode.window.showErrorMessage('Parser not initialized. Please wait a moment and try again.');
         return;
@@ -355,9 +307,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
       
       console.log('Root node type:', tree.rootNode.type);
-      const childTypes = tree.rootNode.children
-        .filter((n): n is NonNullable<typeof n> => n !== null)
-        .map(n => n.type);
+      const childTypes = (tree.rootNode.children as any[])
+        .filter((n:any)=>n!==null && n!==undefined)
+        .map((n:any)=>n.type as string);
       console.log('Child types:', childTypes);
 
       vscode.window.showInformationMessage('Parsing complete! See Debug Console.');
@@ -369,6 +321,7 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('flowdiag.showFlowchart', async () => {
       console.log('Show Flowchart command executed');
       
+      try{await parserReady;}catch{ /* error already shown */ }
       if (!isInitialized || !parser || !jsLang || !tsLang) {
         vscode.window.showErrorMessage('Parser not initialized. Please wait a moment and try again.');
         return;
@@ -423,7 +376,7 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand('flowdiag.retryInit', async () => {
       vscode.window.showInformationMessage('Retrying parser initialization...');
-      await initializeParser();
+      try{parserReady=initializeParser();await parserReady;}catch{/* error surfaced */}
     })
   );
 

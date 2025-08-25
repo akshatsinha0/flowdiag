@@ -3,7 +3,7 @@
   "displayName": "flowdiag",
   "publisher": "akshatsinha0",
   "description": "The visual representation diagrams for the programming functions",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "engines": {
     "vscode": "^1.102.0"
   },
@@ -15,7 +15,10 @@
     "url": "https://github.com/akshatsinha0/flowdiag.git"
   },
   "activationEvents": [
-    "*"
+    "onCommand:flowdiag.debugParse",
+    "onCommand:flowdiag.showFlowchart",
+    "onCommand:flowdiag.test",
+    "onCommand:flowdiag.retryInit"
   ],
   "main": "./dist/extension.js",
   "contributes": {
