@@ -80,7 +80,8 @@ function processStatement(stmt: any, prevNodeId: string, endId: string, mermaidL
   switch (stmt.type) {
     case 'if_statement': {
       
-      const conditionText = getNodeText(stmt.children?.find((c: any) => c.type === 'parenthesized_expression')) || 'condition';
+      const conditionTextRaw = getNodeText(stmt.children?.find((c: any) => c.type === 'parenthesized_expression')) || 'condition';
+      const conditionText = sanitizeLabel(conditionTextRaw);
       mermaidLines.push(`  ${nodeId}{${conditionText}}`);
       mermaidLines.push(`  ${prevNodeId} --> ${nodeId}`);
       
@@ -141,7 +142,7 @@ function processStatement(stmt: any, prevNodeId: string, endId: string, mermaidL
     default: {
       
       const stmtText = getNodeText(stmt) || stmt.type;
-      const cleanText = stmtText.length > 30 ? stmtText.substring(0, 30) + '...' : stmtText;
+      const cleanText = sanitizeLabel(stmtText.length > 60 ? stmtText.substring(0, 60) : stmtText);
       mermaidLines.push(`  ${nodeId}[${cleanText}]`);
       mermaidLines.push(`  ${prevNodeId} --> ${nodeId}`);
       return nodeId;
@@ -164,6 +165,23 @@ function getNodeText(node: any): string {
   return node.type || '';
 }
 
+
+function escapeHtml(s:string){
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function sanitizeLabel(s:string){
+  // simple, safe labels for Mermaid nodes
+  return s
+    .replace(/\n/g,' ')
+    .replace(/\|/g,'¦')
+    .replace(/\[/g,'(')
+    .replace(/\]/g,')')
+    .replace(/\{/g,'(')
+    .replace(/\}/g,')')
+    .trim()
+    .slice(0,60);
+}
 
 function getMermaidWebViewContent(diagramText: string) {
   return `
@@ -345,9 +363,10 @@ export async function activate(context: vscode.ExtensionContext) {
       }
 
       
-      const mermaidText = generateFlowchart(fnNode);
+      let mermaidText = generateFlowchart(fnNode);
+      // escape for HTML so '<' and '&' etc do not break the webview content
+      mermaidText = escapeHtml(mermaidText);
 
-      
       const panel = vscode.window.createWebviewPanel(
         'flowDiag',
         'Flow Diagram',
