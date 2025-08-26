@@ -38,14 +38,13 @@ function generateFlowchart(fnNode: any): string {
   
   mermaidLines.push(`  ${startId}[Start]`);
   
-  
   const body = fnNode.children?.find((child: any) => 
     child.type === 'statement_block' || child.type === 'block_statement'
   );
   
   if (body) {
     const lastNodeId = processStatements(body.children || [], startId, endId, mermaidLines, getNextId);
-    if (lastNodeId !== endId) {
+    if (lastNodeId !== endId && lastNodeId !== startId) {
       mermaidLines.push(`  ${lastNodeId} --> ${endId}`);
     }
   } else {
@@ -86,22 +85,27 @@ function processStatement(stmt: any, prevNodeId: string, endId: string, mermaidL
       
       const continueId = getNextId();
       
-      // Process then branch
-      const thenStmt = stmt.children?.find((c: any) => c.type === 'statement_block' || c.type === 'block_statement' || c.type === 'return_statement');
-      if (thenStmt) {
+      // Find the actual statement after if condition (not the parenthesized expression)
+      const statements = stmt.children?.filter((c: any) => 
+        c.type !== 'if' && 
+        c.type !== 'parenthesized_expression' && 
+        c.type !== 'else_clause'
+      ) || [];
+      
+      // Process then branch (first non-condition statement)
+      if (statements.length > 0) {
+        const thenStmt = statements[0];
         if (thenStmt.type === 'return_statement') {
-          // Direct return statement
           const returnId = getNextId();
           const returnText = sanitizeLabel(getNodeText(thenStmt) || 'return');
           mermaidLines.push(`  ${returnId}[${returnText}]`);
           mermaidLines.push(`  ${nodeId} -->|Yes| ${returnId}`);
           mermaidLines.push(`  ${returnId} --> ${endId}`);
         } else {
-          // Block statement
-          const thenLastId = processStatements(thenStmt.children || [thenStmt], nodeId, endId, mermaidLines, getNextId);
-          mermaidLines.push(`  ${nodeId} -->|Yes| ${thenLastId}`);
-          if (thenLastId !== endId) {
-            mermaidLines.push(`  ${thenLastId} --> ${continueId}`);
+          const thenId = processStatement(thenStmt, nodeId, endId, mermaidLines, getNextId);
+          mermaidLines.push(`  ${nodeId} -->|Yes| ${thenId}`);
+          if (thenId !== endId) {
+            mermaidLines.push(`  ${thenId} --> ${continueId}`);
           }
         }
       } else {
@@ -111,19 +115,23 @@ function processStatement(stmt: any, prevNodeId: string, endId: string, mermaidL
       // Process else branch
       const elseStmt = stmt.children?.find((c: any) => c.type === 'else_clause');
       if (elseStmt) {
-        const elseBody = elseStmt.children?.find((c: any) => c.type === 'statement_block' || c.type === 'block_statement' || c.type === 'return_statement');
-        if (elseBody) {
-          if (elseBody.type === 'return_statement') {
+        const elseStatements = elseStmt.children?.filter((c: any) => 
+          c.type !== 'else' && c.type !== '{'  && c.type !== '}'
+        ) || [];
+        
+        if (elseStatements.length > 0) {
+          const elseFirstStmt = elseStatements[0];
+          if (elseFirstStmt.type === 'return_statement') {
             const returnId = getNextId();
-            const returnText = sanitizeLabel(getNodeText(elseBody) || 'return');
+            const returnText = sanitizeLabel(getNodeText(elseFirstStmt) || 'return');
             mermaidLines.push(`  ${returnId}[${returnText}]`);
             mermaidLines.push(`  ${nodeId} -->|No| ${returnId}`);
             mermaidLines.push(`  ${returnId} --> ${endId}`);
           } else {
-            const elseLastId = processStatements(elseBody.children || [], nodeId, endId, mermaidLines, getNextId);
-            mermaidLines.push(`  ${nodeId} -->|No| ${elseLastId}`);
-            if (elseLastId !== endId) {
-              mermaidLines.push(`  ${elseLastId} --> ${continueId}`);
+            const elseId = processStatement(elseFirstStmt, nodeId, endId, mermaidLines, getNextId);
+            mermaidLines.push(`  ${nodeId} -->|No| ${elseId}`);
+            if (elseId !== endId) {
+              mermaidLines.push(`  ${elseId} --> ${continueId}`);
             }
           }
         } else {
@@ -212,40 +220,52 @@ function sanitizeLabel(s:string){
 }
 
 function getMermaidWebViewContent(diagramText: string) {
-  return `
-  <!DOCTYPE html>
-  <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; script-src https: 'unsafe-inline'; style-src 'unsafe-inline'">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>FlowDiag</title>
-    <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
-    <style>
-      body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
-      .mermaid { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
-    </style>
-  </head>
-  <body>
-    <h2>Function Flowchart</h2>
-    <div class="mermaid">
-      ${diagramText}
-    </div>
-    <script>
+  // Escape the diagram text properly for HTML insertion
+  const escapedDiagramText = diagramText
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+    
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src https: data:; script-src https: 'unsafe-inline'; style-src 'unsafe-inline'">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FlowDiag</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+    .mermaid { background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+    .error { color: red; padding: 20px; background: #ffe6e6; border-radius: 4px; margin: 10px 0; }
+  </style>
+</head>
+<body>
+  <h2>Function Flowchart</h2>
+  <pre id="debug" style="background: #f0f0f0; padding: 10px; font-size: 12px; display: none;">${escapedDiagramText}</pre>
+  <button onclick="document.getElementById('debug').style.display = document.getElementById('debug').style.display === 'none' ? 'block' : 'none'">Toggle Debug</button>
+  <div class="mermaid">${diagramText}</div>
+  <script>
+    try {
       mermaid.initialize({
         startOnLoad: true,
         theme: 'default',
-        flowchart: { useMaxWidth: true, htmlLabels: true }
+        flowchart: { useMaxWidth: true, htmlLabels: true },
+        logLevel: 'error'
       });
-      
-      // Add error handling
-      window.addEventListener('error', function(e) {
-        console.error('Mermaid error:', e.error);
-        document.body.innerHTML += '<div style="color: red; padding: 20px;">Error: ' + e.error.message + '</div>';
-      });
-    </script>
-  </body>
-  </html>`;
+    } catch (error) {
+      console.error('Mermaid initialization error:', error);
+      document.body.innerHTML += '<div class="error">Mermaid initialization failed: ' + error.message + '</div>';
+    }
+    
+    // Add error handling
+    window.addEventListener('error', function(e) {
+      console.error('Runtime error:', e.error);
+      document.body.innerHTML += '<div class="error">Runtime error: ' + e.error.message + '</div>';
+    });
+  </script>
+</body>
+</html>`;
 }
 
 export async function activate(context: vscode.ExtensionContext) {
