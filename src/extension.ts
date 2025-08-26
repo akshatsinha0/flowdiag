@@ -79,36 +79,61 @@ function processStatement(stmt: any, prevNodeId: string, endId: string, mermaidL
   
   switch (stmt.type) {
     case 'if_statement': {
-      
       const conditionTextRaw = getNodeText(stmt.children?.find((c: any) => c.type === 'parenthesized_expression')) || 'condition';
       const conditionText = sanitizeLabel(conditionTextRaw);
       mermaidLines.push(`  ${nodeId}{${conditionText}}`);
       mermaidLines.push(`  ${prevNodeId} --> ${nodeId}`);
       
+      const continueId = getNextId();
       
-      const thenStmt = stmt.children?.find((c: any) => c.type === 'statement_block' || c.type === 'block_statement');
-      const thenEndId = getNextId();
+      // Process then branch
+      const thenStmt = stmt.children?.find((c: any) => c.type === 'statement_block' || c.type === 'block_statement' || c.type === 'return_statement');
       if (thenStmt) {
-        const thenLastId = processStatements(thenStmt.children || [thenStmt], nodeId, endId, mermaidLines, getNextId);
-        mermaidLines.push(`  ${nodeId} -->|Yes| ${thenLastId === nodeId ? thenEndId : thenLastId}`);
-        if (thenLastId === nodeId) {
-          mermaidLines.push(`  ${thenEndId}[Then]`);
-        }
-      }
-      
-      
-      const elseStmt = stmt.children?.find((c: any) => c.type === 'else_clause');
-      if (elseStmt) {
-        const elseBody = elseStmt.children?.find((c: any) => c.type === 'statement_block' || c.type === 'block_statement');
-        if (elseBody) {
-          const elseLastId = processStatements(elseBody.children || [], nodeId, endId, mermaidLines, getNextId);
-          mermaidLines.push(`  ${nodeId} -->|No| ${elseLastId}`);
+        if (thenStmt.type === 'return_statement') {
+          // Direct return statement
+          const returnId = getNextId();
+          const returnText = sanitizeLabel(getNodeText(thenStmt) || 'return');
+          mermaidLines.push(`  ${returnId}[${returnText}]`);
+          mermaidLines.push(`  ${nodeId} -->|Yes| ${returnId}`);
+          mermaidLines.push(`  ${returnId} --> ${endId}`);
+        } else {
+          // Block statement
+          const thenLastId = processStatements(thenStmt.children || [thenStmt], nodeId, endId, mermaidLines, getNextId);
+          mermaidLines.push(`  ${nodeId} -->|Yes| ${thenLastId}`);
+          if (thenLastId !== endId) {
+            mermaidLines.push(`  ${thenLastId} --> ${continueId}`);
+          }
         }
       } else {
-        mermaidLines.push(`  ${nodeId} -->|No| ${thenEndId}`);
+        mermaidLines.push(`  ${nodeId} -->|Yes| ${continueId}`);
       }
       
-      return thenEndId;
+      // Process else branch
+      const elseStmt = stmt.children?.find((c: any) => c.type === 'else_clause');
+      if (elseStmt) {
+        const elseBody = elseStmt.children?.find((c: any) => c.type === 'statement_block' || c.type === 'block_statement' || c.type === 'return_statement');
+        if (elseBody) {
+          if (elseBody.type === 'return_statement') {
+            const returnId = getNextId();
+            const returnText = sanitizeLabel(getNodeText(elseBody) || 'return');
+            mermaidLines.push(`  ${returnId}[${returnText}]`);
+            mermaidLines.push(`  ${nodeId} -->|No| ${returnId}`);
+            mermaidLines.push(`  ${returnId} --> ${endId}`);
+          } else {
+            const elseLastId = processStatements(elseBody.children || [], nodeId, endId, mermaidLines, getNextId);
+            mermaidLines.push(`  ${nodeId} -->|No| ${elseLastId}`);
+            if (elseLastId !== endId) {
+              mermaidLines.push(`  ${elseLastId} --> ${continueId}`);
+            }
+          }
+        } else {
+          mermaidLines.push(`  ${nodeId} -->|No| ${continueId}`);
+        }
+      } else {
+        mermaidLines.push(`  ${nodeId} -->|No| ${continueId}`);
+      }
+      
+      return continueId;
     }
     
     case 'for_statement':
@@ -117,26 +142,29 @@ function processStatement(stmt: any, prevNodeId: string, endId: string, mermaidL
       mermaidLines.push(`  ${nodeId}{${loopText}}`);
       mermaidLines.push(`  ${prevNodeId} --> ${nodeId}`);
       
+      const exitId = getNextId();
+      mermaidLines.push(`  ${exitId}[Continue]`);
       
+      // Process loop body
       const body = stmt.children?.find((c: any) => c.type === 'statement_block' || c.type === 'block_statement');
       if (body) {
         const bodyLastId = processStatements(body.children || [], nodeId, endId, mermaidLines, getNextId);
         mermaidLines.push(`  ${nodeId} -->|Enter| ${bodyLastId}`);
-        mermaidLines.push(`  ${bodyLastId} --> ${nodeId}`);
+        if (bodyLastId !== endId) {
+          mermaidLines.push(`  ${bodyLastId} --> ${nodeId}`);
+        }
       }
       
-      const exitId = getNextId();
-      mermaidLines.push(`  ${exitId}[Continue]`);
       mermaidLines.push(`  ${nodeId} -->|Exit| ${exitId}`);
       return exitId;
     }
     
     case 'return_statement': {
-      const returnText = getNodeText(stmt) || 'return';
+      const returnText = sanitizeLabel(getNodeText(stmt) || 'return');
       mermaidLines.push(`  ${nodeId}[${returnText}]`);
       mermaidLines.push(`  ${prevNodeId} --> ${nodeId}`);
       mermaidLines.push(`  ${nodeId} --> ${endId}`);
-      return nodeId;
+      return endId; // Return endId to prevent further connections
     }
     
     default: {
@@ -208,6 +236,12 @@ function getMermaidWebViewContent(diagramText: string) {
         startOnLoad: true,
         theme: 'default',
         flowchart: { useMaxWidth: true, htmlLabels: true }
+      });
+      
+      // Add error handling
+      window.addEventListener('error', function(e) {
+        console.error('Mermaid error:', e.error);
+        document.body.innerHTML += '<div style="color: red; padding: 20px;">Error: ' + e.error.message + '</div>';
       });
     </script>
   </body>
@@ -364,8 +398,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
       
       let mermaidText = generateFlowchart(fnNode);
-      // escape for HTML so '<' and '&' etc do not break the webview content
-      mermaidText = escapeHtml(mermaidText);
+      // Don't escape HTML - Mermaid needs the raw syntax
+      console.log('Generated Mermaid text:', mermaidText);
 
       const panel = vscode.window.createWebviewPanel(
         'flowDiag',
